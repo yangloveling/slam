@@ -1,0 +1,4 @@
+yaw_publisher:
+  ros__parameters:
+    alpha: 0.1
+    change_threshold_deg: 1.0

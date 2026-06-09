@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>robot_bringup</name>
+  <version>0.0.1</version>
+  <description>Top-level launch files for the robot system.</description>
+  <maintainer email="yyy@example.com">yyy</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>hi13s2_imu</exec_depend>
+  <exec_depend>livox_ros_driver2</exec_depend>
+  <exec_depend>fast_lio</exec_depend>
+  <exec_depend>fastlio2_relocalization</exec_depend>
+  <exec_depend>robot_control</exec_depend>
+  <exec_depend>lite_task_controller</exec_depend>
+  <exec_depend>r2_astar_planner</exec_depend>
+  <exec_depend>r2_planner</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

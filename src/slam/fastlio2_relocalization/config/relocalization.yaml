@@ -1,0 +1,52 @@
+fastlio2_relocalization_node:
+  ros__parameters:
+    map_pcd: "/home/yyy/robot/test.pcd"
+
+    cloud_topic: "/cloud_registered_body"
+    odom_topic: "/odometry/filtered"
+
+    map_frame: "map"
+    odom_frame: "odom"
+    base_frame: "base_link"
+
+    # 上车时开启，雷达离车平放测试时建议 false 或把外参全设 0
+    cloud_to_base_enable: true
+
+    # 上车真实安装外参：base_link -> body
+    base_to_body_tx: 0.126960
+    base_to_body_ty: 0.350815
+    base_to_body_tz: 0.57
+    base_to_body_roll: 0.0
+    base_to_body_pitch: 0.7854
+    base_to_body_yaw: 0.0
+
+    # GICP 参数
+    downsampling_resolution: 0.5
+    max_correspondence_distance: 2.0
+    num_threads: 4
+
+    # 快速移动建议 0.2~0.5
+    align_period: 0.2
+
+    # 点云和里程计时间戳最大允许差值；0 表示关闭检查
+    max_cloud_odom_dt: 0.25
+
+    # 没有新点云时不重复跑 GICP，只维持上一帧 TF
+    skip_repeated_cloud: true
+    min_raw_source_points: 100
+    min_preprocessed_source_points: 50
+
+    # 质量门控
+    min_inliers: 300
+    min_inlier_ratio: 0.25
+
+    # 跳变门控
+    # 如果机器人本身很快，可以适当放大
+    max_translation_jump: 1.5
+    max_rotation_jump_deg: 30.0
+
+    # GICP 失败时继续发布上一帧 map->odom，避免 TF 断掉
+    keep_last_tf_on_fail: true
+
+    # 第一帧没有历史参考，允许接受
+    accept_first_reloc: true

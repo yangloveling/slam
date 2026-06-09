@@ -1,0 +1,174 @@
+lite_task_controller:
+  ros__parameters:
+    odom_topic: /odometry/filtered
+    cmd_vel_topic: /cmd_vel
+    target_yaw_topic: /target_yaw
+    status_topic: /lite_task_status
+
+    # ------------------------------------------------------------
+    # R2 Dijkstra 路径订阅
+    # ------------------------------------------------------------
+    r2_planned_path_topic: /r2_planned_path
+    r2_action_sequence_topic: /r2_action_sequence
+
+    # 是否启用 R2 路径订阅
+    enable_r2_path_subscribe: true
+
+    # 收到新路径时是否清空旧的排队 waypoint
+    clear_queue_when_new_r2_path: true
+
+    # 收到新路径时是否取消当前正在执行的目标
+    # false：当前目标继续跑完，只清空后续旧队列，再加入新路径
+    # true ：立即急停并从新路径重新开始
+    cancel_active_goal_when_new_r2_path: false
+
+    # 普通路径点默认 yaw，单位 rad
+    # 0.0 表示朝 +x 方向
+    r2_default_yaw: 0.0
+
+    # 下台阶前背对台阶 yaw，单位 rad
+    # 当前场地图中台阶方向近似为 +x，背对台阶为 -x，因此 yaw=pi
+    r2_back_to_stair_yaw: 3.1415926
+
+    control_frequency: 30.0
+
+    # ------------------------------------------------------------
+    # PD 参数
+    # 降低 D 项，减少末端忽正忽负抖动
+    # ------------------------------------------------------------
+    k_forward: 1.4
+    k_lateral: 1.4
+    kd_forward: 0.03
+    kd_lateral: 0.03
+    d_filter_alpha: 0.25
+    kw: 0.6
+
+    # ------------------------------------------------------------
+    # 全局最大速度
+    # ------------------------------------------------------------
+    forward_max: 1.2
+    lateral_max: 1.2
+    wz_max: 0.18
+
+    # ------------------------------------------------------------
+    # 小速度死区
+    # 上位机不额外砍小速度，由 min_approach_speed 负责末端补偿
+    # ------------------------------------------------------------
+    forward_min: 0.0
+    lateral_min: 0.0
+
+    # ------------------------------------------------------------
+    # 减速区和到点容差
+    # slow_down_radius 不要太大，否则过早减速
+    # pos_tolerance 不要太小，否则容易卡在目标附近
+    # ------------------------------------------------------------
+    slow_down_radius: 0.20
+    pos_tolerance: 0.030
+    pos_release_tolerance: 0.050
+    yaw_tolerance: 0.030
+
+    pos_stable_time: 0.15
+    yaw_stable_time: 0.15
+    hold_time: 0.10
+
+    # ------------------------------------------------------------
+    # 预对齐阈值
+    # 大于 pi，避免到块中心前触发预旋转。
+    # R2 路径 waypoint 现在先平移到目标块中心，到达后再转到目标 yaw。
+    # ------------------------------------------------------------
+    pre_align_yaw_threshold: 6.30
+
+    # ------------------------------------------------------------
+    # 角速度控制
+    # 底盘单片机只需要 target_yaw 和当前 yaw，不需要上位机角速度
+    # ------------------------------------------------------------
+    publish_angular_z: false
+
+    # ------------------------------------------------------------
+    # 移动过程中保持当前 yaw
+    # R2 路径 waypoint 不在移动阶段追目标 yaw，目标 yaw 只在到点后 ALIGN。
+    # ------------------------------------------------------------
+    keep_yaw_during_move: true
+    use_current_yaw_as_move_target: true
+
+    debug_log: true
+    debug_safe_mode: false
+    debug_force_zero_angular_z: false
+    debug_print_every_ms: 1000
+
+    debug_safe_forward_max: 0.30
+    debug_safe_lateral_max: 0.15
+    debug_safe_wz_max: 0.15
+
+    enable_goal_timeout: true
+    goal_timeout_sec: 120.0
+
+    control_forward_sign: 1.0
+    control_lateral_sign: 1.0
+
+    display_forward_sign: -1.0
+    display_lateral_sign: -1.0
+
+    cmd_x_sign: 1.0
+    cmd_y_sign: 1.0
+
+    # ------------------------------------------------------------
+    # x 慢速区
+    # 保持原逻辑
+    # ------------------------------------------------------------
+    enable_x_slow_zone: true
+    x_slow_zone_min: 2.0
+    x_slow_zone_max: 7.5
+    x_slow_zone_scale: 0.25
+    x_slow_zone_hysteresis: 0.05
+    x_slow_scale_angular: true
+
+    # ------------------------------------------------------------
+    # x 坡道提速区
+    # 保持原逻辑
+    # ------------------------------------------------------------
+    enable_x_boost_zone: true
+    x_boost_zone_min: 8.195
+    x_boost_zone_max: 10.595
+    x_boost_zone_scale: 1.3
+    x_boost_zone_hysteresis: 0.05
+    x_boost_scale_angular: false
+
+    # ------------------------------------------------------------
+    # 旧参数关闭，避免干扰
+    # ------------------------------------------------------------
+    enable_constant_x_speed_zone: false
+    constant_x_speed_zone_min: 1.0
+    constant_x_speed_zone_max: 7.5
+    constant_x_speed_value: 200.0
+
+    # ------------------------------------------------------------
+    # 加速度限制
+    # 当前关闭；如果以后打开，x/y 限制保持一致
+    # ------------------------------------------------------------
+    enable_acc_limit: true
+    max_acc_x: 0.45
+    max_acc_y: 0.30
+    max_acc_wz: 0.30
+
+    # ------------------------------------------------------------
+    # 误差限幅
+    # x/y 参与控制的误差上限一致
+    # ------------------------------------------------------------
+    max_forward_error_for_control: 2.0
+    max_lateral_error_for_control: 2.0
+
+    # ------------------------------------------------------------
+    # 最小接近速度
+    # 关键：防止接近目标时速度太小，底盘推不动
+    # ------------------------------------------------------------
+    enable_min_approach_speed: true
+    min_approach_linear_speed: 0.025
+    min_slow_scale: 0.18
+
+    # ------------------------------------------------------------
+    # 卡住释放
+    # ------------------------------------------------------------
+    enable_stuck_release: true
+    stuck_release_time: 0.80
+    progress_epsilon: 0.003

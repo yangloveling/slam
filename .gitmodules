@@ -1,0 +1,12 @@
+[submodule "src/Livox-SDK2"]
+	path = src/Livox-SDK2
+	url = https://github.com/Livox-SDK/Livox-SDK2.git
+[submodule "src/driver/livox_ros_driver2"]
+	path = src/driver/livox_ros_driver2
+	url = https://github.com/Livox-SDK/livox_ros_driver2.git
+[submodule "src/slam/FAST_LIO_ROS2"]
+	path = src/slam/FAST_LIO_ROS2
+	url = https://github.com/Ericsii/FAST_LIO_ROS2.git
+[submodule "src/slam/small_gicp"]
+	path = src/slam/small_gicp
+	url = https://github.com/koide3/small_gicp.git
