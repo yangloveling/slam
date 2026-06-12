@@ -11,6 +11,8 @@
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
 
   <!-- python-can 是 Python 库，不作为系统依赖，但可以在运行时确保存在 -->
   <exec_depend>python3-can</exec_depend>

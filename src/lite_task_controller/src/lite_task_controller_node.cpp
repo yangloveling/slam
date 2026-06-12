@@ -130,7 +130,6 @@ declare_parameter<bool>("auto_publish_reset_kfs_after_lateral_done", true);
     declare_parameter<double>("k_lateral", 1.2);
     declare_parameter<double>("kd_forward", 0.15);
     declare_parameter<double>("kd_lateral", 0.10);
-    declare_parameter<double>("d_filter_alpha", 0.25);
     declare_parameter<double>("kw", 1.0);
 
     declare_parameter<double>("forward_max", 4.0);
@@ -139,6 +138,16 @@ declare_parameter<bool>("auto_publish_reset_kfs_after_lateral_done", true);
 
     declare_parameter<double>("forward_min", 0.0);
     declare_parameter<double>("lateral_min", 0.0);
+    declare_parameter<double>("lateral_stop_tolerance", 0.04);
+    declare_parameter<bool>("enable_straight_lateral_lock", true);
+    declare_parameter<double>("straight_lateral_lock_goal_tolerance", 0.05);
+    declare_parameter<double>("straight_lateral_lock_max_lateral_ratio", 0.15);
+    declare_parameter<double>("straight_lateral_lock_min_forward", 0.20);
+    declare_parameter<double>("straight_lateral_finish_tolerance", 0.12);
+    declare_parameter<bool>("enable_yaw_lateral_feedforward", true);
+    declare_parameter<double>("yaw_lateral_feedforward_gain", 1.0);
+    declare_parameter<double>("yaw_lateral_feedforward_max", 0.25);
+    declare_parameter<bool>("enable_r2_lane_drive", true);
 
     declare_parameter<double>("slow_down_radius", 0.60);
     declare_parameter<double>("pos_tolerance", 0.06);
@@ -207,6 +216,7 @@ declare_parameter<bool>("auto_publish_reset_kfs_after_lateral_done", true);
     declare_parameter<bool>("enable_min_approach_speed", true);
     declare_parameter<double>("min_approach_linear_speed", 0.08);
     declare_parameter<double>("min_slow_scale", 0.18);
+    declare_parameter<bool>("min_approach_boost_lateral", false);
 
     declare_parameter<bool>("enable_stuck_release", true);
     declare_parameter<double>("stuck_release_time", 0.80);
@@ -390,6 +400,8 @@ private:
     int path_block{-1};
     bool force_pre_align_yaw{false};
     bool use_goal_yaw_during_move{false};
+    bool use_lane_drive{false};
+    double drive_yaw{0.0};
 
     bool is_pickup{false};
     int pickup_block{-1};
@@ -398,6 +410,9 @@ private:
     // true : CAN ID 0x77 data 0x03, camera looks backward
     bool camera_look_backward{false};
     bool allow_block0_can{true};
+    bool use_custom_pos_tolerance{false};
+    double custom_pos_tolerance{0.0};
+    double custom_pos_release_tolerance{0.0};
   };
 
   struct PickupTask
@@ -517,7 +532,6 @@ rclcpp::Subscription<std_msgs::msg::String>::SharedPtr lateral_correction_cmd_su
   double k_lateral_{1.2};
   double kd_forward_{0.15};
   double kd_lateral_{0.10};
-  double d_filter_alpha_{0.25};
   double kw_{1.0};
 
   double forward_max_{4.0};
@@ -526,10 +540,22 @@ rclcpp::Subscription<std_msgs::msg::String>::SharedPtr lateral_correction_cmd_su
 
   double forward_min_{0.0};
   double lateral_min_{0.0};
+  double lateral_stop_tolerance_{0.04};
+  double current_lateral_stop_tolerance_{0.04};
+  bool enable_straight_lateral_lock_{true};
+  double straight_lateral_lock_goal_tolerance_{0.05};
+  double straight_lateral_lock_max_lateral_ratio_{0.15};
+  double straight_lateral_lock_min_forward_{0.20};
+  double straight_lateral_finish_tolerance_{0.12};
+  bool enable_yaw_lateral_feedforward_{true};
+  double yaw_lateral_feedforward_gain_{1.0};
+  double yaw_lateral_feedforward_max_{0.25};
 
   double slow_down_radius_{0.60};
   double pos_tolerance_{0.06};
   double pos_release_tolerance_{0.10};
+  double current_pos_tolerance_{0.06};
+  double current_pos_release_tolerance_{0.10};
   double yaw_tolerance_{0.05};
 
   double pos_stable_time_{0.20};
@@ -613,6 +639,7 @@ bool auto_publish_reset_kfs_after_lateral_done_{true};
   bool enable_min_approach_speed_{true};
   double min_approach_linear_speed_{0.08};
   double min_slow_scale_{0.18};
+  bool min_approach_boost_lateral_{false};
 
   bool enable_stuck_release_{true};
   double stuck_release_time_{0.80};
@@ -648,8 +675,6 @@ bool auto_publish_reset_kfs_after_lateral_done_{true};
 
   double last_forward_err_{0.0};
   double last_lateral_err_{0.0};
-  double d_forward_filtered_{0.0};
-  double d_lateral_filtered_{0.0};
   bool last_err_valid_{false};
 
   double best_dist_{1e9};
@@ -670,6 +695,7 @@ bool auto_publish_reset_kfs_after_lateral_done_{true};
 		  bool current_use_goal_yaw_during_move_{false};
 		  bool current_r2_lane_drive_{false};
 		  bool current_r2_lane_goal_accepted_{false};
+		  bool straight_lateral_lock_active_{false};
 		  bool current_position_accepted_{false};
 		  bool current_allow_block0_can_{true};
 		  double current_r2_lane_drive_sign_{1.0};
@@ -741,7 +767,6 @@ int pickup_vision_lateral_block_{-1};
     k_lateral_ = get_parameter("k_lateral").as_double();
     kd_forward_ = get_parameter("kd_forward").as_double();
     kd_lateral_ = get_parameter("kd_lateral").as_double();
-    d_filter_alpha_ = std::clamp(get_parameter("d_filter_alpha").as_double(), 0.0, 1.0);
     kw_ = get_parameter("kw").as_double();
 
     forward_max_ = get_parameter("forward_max").as_double();
@@ -750,6 +775,24 @@ int pickup_vision_lateral_block_{-1};
 
     forward_min_ = get_parameter("forward_min").as_double();
     lateral_min_ = get_parameter("lateral_min").as_double();
+    lateral_stop_tolerance_ =
+      std::max(0.0, get_parameter("lateral_stop_tolerance").as_double());
+    enable_straight_lateral_lock_ =
+      get_parameter("enable_straight_lateral_lock").as_bool();
+    straight_lateral_lock_goal_tolerance_ =
+      std::max(0.0, get_parameter("straight_lateral_lock_goal_tolerance").as_double());
+    straight_lateral_lock_max_lateral_ratio_ =
+      std::max(0.0, get_parameter("straight_lateral_lock_max_lateral_ratio").as_double());
+    straight_lateral_lock_min_forward_ =
+      std::max(0.0, get_parameter("straight_lateral_lock_min_forward").as_double());
+    straight_lateral_finish_tolerance_ =
+      std::max(0.0, get_parameter("straight_lateral_finish_tolerance").as_double());
+    enable_yaw_lateral_feedforward_ =
+      get_parameter("enable_yaw_lateral_feedforward").as_bool();
+    yaw_lateral_feedforward_gain_ =
+      get_parameter("yaw_lateral_feedforward_gain").as_double();
+    yaw_lateral_feedforward_max_ =
+      std::max(0.0, get_parameter("yaw_lateral_feedforward_max").as_double());
 
     slow_down_radius_ = get_parameter("slow_down_radius").as_double();
     pos_tolerance_ = get_parameter("pos_tolerance").as_double();
@@ -818,6 +861,7 @@ int pickup_vision_lateral_block_{-1};
     enable_min_approach_speed_ = get_parameter("enable_min_approach_speed").as_bool();
     min_approach_linear_speed_ = get_parameter("min_approach_linear_speed").as_double();
     min_slow_scale_ = get_parameter("min_slow_scale").as_double();
+    min_approach_boost_lateral_ = get_parameter("min_approach_boost_lateral").as_bool();
 
     enable_stuck_release_ = get_parameter("enable_stuck_release").as_bool();
     stuck_release_time_ = get_parameter("stuck_release_time").as_double();
@@ -1104,13 +1148,22 @@ int pickup_vision_lateral_block_{-1};
     double & vy,
     double min_speed,
     double max_vx,
-    double max_vy)
+    double max_vy,
+    bool boost_lateral)
   {
-    const double speed = std::hypot(vx, vy);
     const double min_s = std::abs(min_speed);
 
-    if (speed < 1e-9) return;
-    if (speed >= min_s) return;
+    if (!boost_lateral) {
+      if (std::abs(vx) < 1e-9 || std::abs(vx) >= min_s) return;
+      vx = std::copysign(min_s, vx);
+      vx = clampAbs(vx, max_vx);
+      vy = clampAbs(vy, max_vy);
+      return;
+    }
+
+    const double speed = std::hypot(vx, vy);
+
+    if (speed < 1e-9 || speed >= min_s) return;
 
     const double ratio = min_s / speed;
     vx *= ratio;
@@ -1516,12 +1569,12 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
 
   bool isPositionReached(double dist) const
   {
-    return dist <= pos_tolerance_;
+    return dist <= current_pos_tolerance_;
   }
 
   bool isPositionReleaseReached(double dist) const
   {
-    return dist <= std::max(pos_tolerance_, pos_release_tolerance_);
+    return dist <= std::max(current_pos_tolerance_, current_pos_release_tolerance_);
   }
 
   bool getBlockCenter(int block_id, double & x, double & y) const
@@ -1961,45 +2014,57 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
     return x_boost_zone_active_;
   }
 
-  void applyXZoneScaleToFinalCmd(
-    geometry_msgs::msg::Twist & cmd,
-    bool in_x_slow_zone,
-    bool in_x_boost_zone) const
-  {
-    if (in_x_slow_zone) {
-      const double s = std::clamp(std::abs(x_slow_zone_scale_), 0.001, 1.0);
+void applyXZoneScaleToFinalCmd(
+  geometry_msgs::msg::Twist & cmd,
+  bool in_x_slow_zone,
+  bool in_x_boost_zone) const
+{
+  if (in_x_slow_zone) {
+    const double s = std::clamp(std::abs(x_slow_zone_scale_), 0.001, 1.0);
 
-      cmd.linear.x *= s;
-      cmd.linear.y *= s;
+    /*
+      x 慢速区只限制前进方向 linear.x。
+      不再缩放 linear.y。
 
-      if (x_slow_scale_angular_) {
-        cmd.angular.z *= s;
-      }
+      原来同时缩放 y：
+        cmd.linear.y *= s;
 
-      return;
+      会导致：
+        - 普通路径横向收敛很慢
+        - 视觉横向纠偏在慢速区内几乎不动
+    */
+    cmd.linear.x *= s;
+
+    if (x_slow_scale_angular_) {
+      cmd.angular.z *= s;
     }
 
-    if (in_x_boost_zone) {
-      const double s = std::clamp(std::abs(x_boost_zone_scale_), 1.0, 5.0);
-
-      cmd.linear.x *= s;
-      cmd.linear.y *= s;
-
-      if (x_boost_scale_angular_) {
-        cmd.angular.z *= s;
-      }
-
-      return;
-    }
+    return;
   }
+
+  if (in_x_boost_zone) {
+    const double s = std::clamp(std::abs(x_boost_zone_scale_), 1.0, 5.0);
+
+    /*
+      x boost 区也只 boost 前进方向。
+      避免横向被放大后甩动。
+    */
+    cmd.linear.x *= s;
+
+    if (x_boost_scale_angular_) {
+      cmd.angular.z *= s;
+    }
+
+    return;
+  }
+}
+
 
 	  void resetControllerMemory()
 	  {
 	    last_err_valid_ = false;
 	    last_forward_err_ = 0.0;
 	    last_lateral_err_ = 0.0;
-    d_forward_filtered_ = 0.0;
-    d_lateral_filtered_ = 0.0;
     best_dist_ = 1e9;
     last_progress_time_ = now();
 	    last_control_time_ = now();
@@ -2083,24 +2148,53 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
 	    current_path_block_ = wp.path_block;
 	    current_waypoint_source_ = wp.source;
 	    current_force_pre_align_yaw_ = wp.force_pre_align_yaw;
-	    current_use_goal_yaw_during_move_ = wp.use_goal_yaw_during_move;
-	    current_r2_lane_drive_ = false;
-	    current_r2_lane_goal_accepted_ = false;
-	    current_position_accepted_ = false;
+		    current_use_goal_yaw_during_move_ = wp.use_goal_yaw_during_move;
+		    current_r2_lane_drive_ = false;
+		    current_r2_lane_goal_accepted_ = false;
+		    straight_lateral_lock_active_ = false;
+		    current_position_accepted_ = false;
 	    current_allow_block0_can_ = wp.allow_block0_can;
+    if (wp.use_custom_pos_tolerance) {
+      current_pos_tolerance_ = std::max(0.001, wp.custom_pos_tolerance);
+      current_pos_release_tolerance_ =
+        std::max(current_pos_tolerance_, wp.custom_pos_release_tolerance);
+      current_lateral_stop_tolerance_ =
+        std::min(std::abs(lateral_stop_tolerance_), current_pos_tolerance_ * 0.5);
+    } else {
+      current_pos_tolerance_ = pos_tolerance_;
+      current_pos_release_tolerance_ = pos_release_tolerance_;
+      current_lateral_stop_tolerance_ = std::abs(lateral_stop_tolerance_);
+    }
 
     const double ex = goal_pose_.x - current_pose_.x;
     const double ey = goal_pose_.y - current_pose_.y;
     const double dist = std::hypot(ex, ey);
     const double eyaw = angleDiff(goal_pose_.yaw, current_pose_.yaw);
 
-	    yaw_only_mode_ = dist <= pos_tolerance_;
+	    yaw_only_mode_ = dist <= current_pos_tolerance_;
     pre_align_mode_ = false;
 
-		    move_phase_target_yaw_ = current_pose_.yaw;
-		    move_phase_target_yaw_ = selectMovePhaseTargetYaw();
+			    move_phase_target_yaw_ = current_pose_.yaw;
+			    move_phase_target_yaw_ = selectMovePhaseTargetYaw();
 
-	    if (current_r2_lane_drive_) {
+	    const double cy0 = std::cos(move_phase_target_yaw_);
+	    const double sy0 = std::sin(move_phase_target_yaw_);
+	    const double initial_forward_err =
+	      control_forward_sign_ * (cy0 * ex + sy0 * ey);
+	    const double initial_lateral_err =
+	      control_lateral_sign_ * (-sy0 * ex + cy0 * ey);
+	    const bool initial_lateral_small =
+	      std::abs(initial_lateral_err) <= straight_lateral_lock_goal_tolerance_;
+	    const bool initial_lateral_ratio_small =
+	      std::abs(initial_lateral_err) <=
+	      std::abs(initial_forward_err) * straight_lateral_lock_max_lateral_ratio_;
+
+	    straight_lateral_lock_active_ =
+	      enable_straight_lateral_lock_ &&
+	      std::abs(initial_forward_err) >= straight_lateral_lock_min_forward_ &&
+	      (initial_lateral_small || initial_lateral_ratio_small);
+
+		    if (current_r2_lane_drive_) {
 	      const double lane_forward_err = goalYawForwardError();
 	      current_r2_lane_drive_sign_ = lane_forward_err < 0.0 ? -1.0 : 1.0;
 
@@ -2111,17 +2205,30 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
 	        current_path_block_,
 	        lane_forward_err,
 	        current_r2_lane_drive_sign_);
-	    } else {
-	      current_r2_lane_drive_sign_ = 1.0;
+		    } else {
+		      current_r2_lane_drive_sign_ = 1.0;
+		    }
+
+	    if (straight_lateral_lock_active_) {
+	      RCLCPP_WARN(
+	        get_logger(),
+	        "Straight lateral lock enabled: initial_forward_err=%.3f "
+	        "initial_lateral_err=%.3f goal_tol=%.3f ratio_tol=%.3f finish_tol=%.3f",
+	        initial_forward_err,
+	        initial_lateral_err,
+	        straight_lateral_lock_goal_tolerance_,
+	        straight_lateral_lock_max_lateral_ratio_,
+	        straight_lateral_finish_tolerance_);
 	    }
 
-    resetControllerMemory();
+	    resetControllerMemory();
 
     RCLCPP_WARN(
       get_logger(),
       "Start waypoint: goal=(%.3f, %.3f, %.3f rad), mode=%s, source=%s, queue_remain=%zu, "
       "initial_dist=%.3f, initial_eyaw=%.3f, yaw_only_mode=%d, force_pre_align=%d, "
-	      "use_goal_yaw_during_move=%d, r2_lane_drive=%d, is_pickup=%d, pickup_block=%d",
+		      "use_goal_yaw_during_move=%d, r2_lane_drive=%d, straight_lock=%d, "
+		      "is_pickup=%d, pickup_block=%d, pos_tol=%.4f, release_tol=%.4f, lateral_deadband=%.4f",
       goal_pose_.x, goal_pose_.y, goal_pose_.yaw,
       moveModeToString(move_mode_),
       wp.source.c_str(),
@@ -2130,10 +2237,14 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
       eyaw,
       yaw_only_mode_,
 	      current_force_pre_align_yaw_ ? 1 : 0,
-	      current_use_goal_yaw_during_move_ ? 1 : 0,
-	      current_r2_lane_drive_ ? 1 : 0,
-	      current_waypoint_is_pickup_ ? 1 : 0,
-	      current_pickup_block_);
+		      current_use_goal_yaw_during_move_ ? 1 : 0,
+		      current_r2_lane_drive_ ? 1 : 0,
+		      straight_lateral_lock_active_ ? 1 : 0,
+		      current_waypoint_is_pickup_ ? 1 : 0,
+		      current_pickup_block_,
+      current_pos_tolerance_,
+      current_pos_release_tolerance_,
+      current_lateral_stop_tolerance_);
 
 	    if (yaw_only_mode_) {
 	      setState(State::ALIGN_YAW);
@@ -2166,9 +2277,10 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
 		      current_path_block_ = -1;
 		      current_waypoint_source_ = "unknown";
 		      current_position_accepted_ = false;
-		      current_allow_block0_can_ = true;
-		      current_force_pre_align_yaw_ = false;
-	      current_use_goal_yaw_during_move_ = false;
+			      current_allow_block0_can_ = true;
+			      current_force_pre_align_yaw_ = false;
+		      current_use_goal_yaw_during_move_ = false;
+		      straight_lateral_lock_active_ = false;
 	      RCLCPP_INFO(get_logger(), "All waypoints completed.");
 	      setState(State::IDLE);
 	      return false;
@@ -2292,9 +2404,10 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
 		      current_path_block_ = -1;
 		      current_waypoint_source_ = "unknown";
 		      current_position_accepted_ = false;
-		      current_allow_block0_can_ = true;
-		      current_force_pre_align_yaw_ = false;
-	      current_use_goal_yaw_during_move_ = false;
+			      current_allow_block0_can_ = true;
+			      current_force_pre_align_yaw_ = false;
+		      current_use_goal_yaw_during_move_ = false;
+		      straight_lateral_lock_active_ = false;
 	      setState(State::IDLE);
 
       RCLCPP_WARN(get_logger(), "New R2 path received. Active goal canceled and controller reset to IDLE.");
@@ -2567,9 +2680,10 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
 		        current_path_block_ = -1;
 		        current_waypoint_source_ = "unknown";
 		        current_position_accepted_ = false;
-		        current_allow_block0_can_ = true;
-		        current_force_pre_align_yaw_ = false;
-	        current_use_goal_yaw_during_move_ = false;
+			        current_allow_block0_can_ = true;
+			        current_force_pre_align_yaw_ = false;
+		        current_use_goal_yaw_during_move_ = false;
+		        straight_lateral_lock_active_ = false;
 	        arm_grab_done_received_ = false;
 	        pickup_step_off_sent_ = false;
 	        pickup_step_on_sent_ = false;
@@ -2614,6 +2728,20 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
     wp.source = "absolute";
     wp.is_pickup = false;
     wp.pickup_block = -1;
+    if (req->use_custom_tolerance) {
+      if (!std::isfinite(req->pos_tolerance) ||
+          !std::isfinite(req->pos_release_tolerance) ||
+          req->pos_tolerance <= 0.0 ||
+          req->pos_release_tolerance <= 0.0) {
+        res->success = false;
+        res->message = "Custom tolerance must be positive finite values.";
+        return;
+      }
+
+      wp.use_custom_pos_tolerance = true;
+      wp.custom_pos_tolerance = req->pos_tolerance;
+      wp.custom_pos_release_tolerance = req->pos_release_tolerance;
+    }
 
     RCLCPP_INFO(
       get_logger(),
@@ -2716,8 +2844,8 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
 	      current_path_block_,
 	      current_waypoint_is_pickup_ ? 1 : 0,
 	      dist,
-      pos_tolerance_,
-      pos_release_tolerance_,
+      current_pos_tolerance_,
+      current_pos_release_tolerance_,
       strict ? 1 : 0,
 	      current_pose_.x,
 	      current_pose_.y,
@@ -2779,9 +2907,10 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
 		        current_path_block_ = -1;
 		        current_waypoint_source_ = "unknown";
 		        current_position_accepted_ = false;
-		        current_allow_block0_can_ = true;
-		        current_force_pre_align_yaw_ = false;
-	        current_use_goal_yaw_during_move_ = false;
+			        current_allow_block0_can_ = true;
+			        current_force_pre_align_yaw_ = false;
+		        current_use_goal_yaw_during_move_ = false;
+		        straight_lateral_lock_active_ = false;
 	        setState(State::IDLE);
 	        return;
       }
@@ -2828,7 +2957,8 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
 
 	        const double lane_forward_err = goalYawForwardError();
 	        const double lane_lateral_err = goalYawLateralError();
-	        const double lane_lateral_tol = std::max(pos_tolerance_, pos_release_tolerance_);
+	        const double lane_lateral_tol =
+          std::max(current_pos_tolerance_, current_pos_release_tolerance_);
 	        const double motion_error =
 	          current_r2_lane_drive_ ? std::abs(lane_forward_err) : dist;
 
@@ -2837,11 +2967,22 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
 	          last_progress_time_ = now_t;
 	        }
 
-	        const bool pos_reached = isPositionReached(dist);
-	        const bool pos_release_reached = isPositionReleaseReached(dist);
+	        const bool straight_lock_reached =
+	          straight_lateral_lock_active_ &&
+	          std::abs(control_forward_err) <= current_pos_tolerance_ &&
+	          std::abs(control_lateral_err) <= straight_lateral_finish_tolerance_;
+	        const bool straight_lock_release_reached =
+	          straight_lateral_lock_active_ &&
+	          std::abs(control_forward_err) <=
+            std::max(current_pos_tolerance_, current_pos_release_tolerance_) &&
+	          std::abs(control_lateral_err) <= straight_lateral_finish_tolerance_;
+	        const bool pos_reached = isPositionReached(dist) || straight_lock_reached;
+	        const bool pos_release_reached =
+	          isPositionReleaseReached(dist) || straight_lock_release_reached;
 	        const bool lane_forward_reached =
 	          current_r2_lane_drive_ &&
-	          std::abs(lane_forward_err) <= std::max(pos_tolerance_, pos_release_tolerance_);
+	          std::abs(lane_forward_err) <=
+            std::max(current_pos_tolerance_, current_pos_release_tolerance_);
 	        const bool lane_target_passed =
 	          current_r2_lane_drive_ &&
 	          (current_r2_lane_drive_sign_ * lane_forward_err <= 0.0);
@@ -2888,10 +3029,7 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
 	              dist);
 	          }
 
-	          geometry_msgs::msg::Twist target_cmd;
-	          applyXZoneScaleToFinalCmd(target_cmd, in_x_slow_zone, in_x_boost_zone);
-	          geometry_msgs::msg::Twist cmd = applyAccelerationLimit(target_cmd);
-	          cmd_vel_pub_->publish(cmd);
+	          publishHardStop();
 
 	          if ((now_t - pos_reached_since_).seconds() >= pos_stable_time_) {
 	            acceptPositionAndGoAlign(
@@ -2902,48 +3040,106 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
 	          break;
 	        }
 
-	        double scale = 1.0;
-	        if (motion_error < slow_down_radius_) {
-	          const double r = motion_error / std::max(1e-6, slow_down_radius_);
-	          scale = std::clamp(r, std::abs(min_slow_scale_), 1.0);
-	        }
+		        const auto axisSlowScale = [this](double abs_error) {
+		          if (abs_error >= slow_down_radius_) {
+		            return 1.0;
+		          }
+
+		          const double r = abs_error / std::max(1e-6, slow_down_radius_);
+		          return std::clamp(r, std::abs(min_slow_scale_), 1.0);
+		        };
 
 	        const double limited_forward_err = std::clamp(
 	          current_r2_lane_drive_ ? lane_forward_err : control_forward_err,
 	          -std::abs(max_forward_error_for_control_),
 	          std::abs(max_forward_error_for_control_));
 
+	        double lateral_err_for_control = control_lateral_err;
+
+	        if (current_r2_lane_drive_) {
+	          lateral_err_for_control = 0.0;
+	        } else if (straight_lateral_lock_active_) {
+	          const double straight_lateral_limit =
+	            std::max(
+	              std::abs(straight_lateral_lock_goal_tolerance_),
+	              std::abs(limited_forward_err) *
+	              std::abs(straight_lateral_lock_max_lateral_ratio_));
+	          lateral_err_for_control =
+	            clampAbs(control_lateral_err, straight_lateral_limit);
+	        }
+
 	        const double limited_lateral_err = std::clamp(
-	          current_r2_lane_drive_ ? 0.0 : control_lateral_err,
+	          lateral_err_for_control,
 	          -std::abs(max_lateral_error_for_control_),
 	          std::abs(max_lateral_error_for_control_));
+        double lateral_control_err = limited_lateral_err;
+
+        if (!current_r2_lane_drive_) {
+          const double lateral_deadband = current_lateral_stop_tolerance_;
+          const double abs_lateral_err = std::abs(limited_lateral_err);
+
+          if (abs_lateral_err <= lateral_deadband) {
+            lateral_control_err = 0.0;
+          } else {
+            lateral_control_err =
+              std::copysign(abs_lateral_err - lateral_deadband, limited_lateral_err);
+          }
+        }
+        const double forward_scale =
+  axisSlowScale(std::abs(limited_forward_err));
+
+/*
+  横向不要像前进一样在末端被压得太狠。
+  原逻辑 lateral_scale = axisSlowScale(abs(lateral_err))，
+  会导致横向剩 10cm 左右时 scale 只有 0.2 左右，vy 很小，横移非常慢。
+
+  这里保证横向 scale 最低 0.55：
+  - 前进仍然正常减速
+  - 横移末端不会慢到不动
+  - 视觉小距离纠偏也更容易执行
+*/
+double lateral_scale = 1.0;
+
+if (!straight_lateral_lock_active_) {
+  lateral_scale = axisSlowScale(std::abs(lateral_control_err));
+  lateral_scale = std::max(lateral_scale, 0.55);
+}
+
 
         double d_forward = 0.0;
         double d_lateral = 0.0;
 
         if (last_err_valid_) {
           d_forward = (limited_forward_err - last_forward_err_) / dt;
-          d_lateral = (limited_lateral_err - last_lateral_err_) / dt;
+          d_lateral = (lateral_control_err - last_lateral_err_) / dt;
         }
 
         last_forward_err_ = limited_forward_err;
-        last_lateral_err_ = limited_lateral_err;
+        last_lateral_err_ = lateral_control_err;
         last_err_valid_ = true;
 
         d_forward = clampAbs(d_forward, 5.0);
         d_lateral = clampAbs(d_lateral, 5.0);
-        d_forward_filtered_ =
-          d_filter_alpha_ * d_forward + (1.0 - d_filter_alpha_) * d_forward_filtered_;
-        d_lateral_filtered_ =
-          d_filter_alpha_ * d_lateral + (1.0 - d_filter_alpha_) * d_lateral_filtered_;
 
         double forward_cmd =
-          k_forward_ * limited_forward_err * scale +
-          kd_forward_ * d_forward_filtered_ * scale;
+          k_forward_ * limited_forward_err * forward_scale +
+          kd_forward_ * d_forward;
 
         double lateral_cmd =
-          k_lateral_ * limited_lateral_err * scale +
-          kd_lateral_ * d_lateral_filtered_ * scale;
+          k_lateral_ * lateral_control_err * lateral_scale +
+          kd_lateral_ * d_lateral;
+
+        double yaw_lateral_ff = 0.0;
+        if (enable_yaw_lateral_feedforward_ &&
+            straight_lateral_lock_active_ &&
+            !current_r2_lane_drive_) {
+          const double move_eyaw = angleDiff(move_phase_target_yaw_, current_pose_.yaw);
+          yaw_lateral_ff =
+            yaw_lateral_feedforward_gain_ * forward_cmd * std::sin(move_eyaw);
+          yaw_lateral_ff =
+            clampAbs(yaw_lateral_ff, std::abs(yaw_lateral_feedforward_max_));
+          lateral_cmd += yaw_lateral_ff;
+        }
 
         if (std::abs(forward_cmd) < forward_min_) {
           forward_cmd = 0.0;
@@ -2956,15 +3152,24 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
         forward_cmd = clampAbs(forward_cmd, std::abs(forward_max_));
         lateral_cmd = clampAbs(lateral_cmd, std::abs(lateral_max_));
 
+	        if (enable_min_approach_speed_ &&
+	            motion_error < slow_down_radius_ &&
+	            !pos_release_reached) {
+	          applyMinPlanarSpeed(
+	            forward_cmd,
+            lateral_cmd,
+            min_approach_linear_speed_,
+            std::abs(forward_max_),
+            std::abs(lateral_max_),
+            min_approach_boost_lateral_);
+        }
+
 	        if (enable_stuck_release_ && pos_release_reached && current_path_block_ < 0) {
           const double no_progress_time = (now_t - last_progress_time_).seconds();
 
           if (no_progress_time >= stuck_release_time_) {
             if ((now_t - pos_reached_since_).seconds() >= pos_stable_time_) {
-              geometry_msgs::msg::Twist target_cmd;
-              applyXZoneScaleToFinalCmd(target_cmd, in_x_slow_zone, in_x_boost_zone);
-              geometry_msgs::msg::Twist cmd = applyAccelerationLimit(target_cmd);
-              cmd_vel_pub_->publish(cmd);
+              publishHardStop();
               acceptPositionAndGoAlign(dist, false);
               break;
             }
@@ -2999,7 +3204,9 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
 
         applyXZoneScaleToFinalCmd(target_cmd, in_x_slow_zone, in_x_boost_zone);
 
-	        if (enable_min_approach_speed_ && motion_error < slow_down_radius_ && !pos_reached) {
+	        if (enable_min_approach_speed_ &&
+	            motion_error < slow_down_radius_ &&
+	            !pos_release_reached) {
 	          double vx = target_cmd.linear.x;
 	          double vy = target_cmd.linear.y;
 
@@ -3008,7 +3215,8 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
             vy,
             min_approach_linear_speed_,
             std::abs(forward_max_),
-            std::abs(lateral_max_));
+            std::abs(lateral_max_),
+            min_approach_boost_lateral_);
 
           target_cmd.linear.x = vx;
           target_cmd.linear.y = vy;
@@ -3018,14 +3226,21 @@ void publishInfraredOpenOnceAtBlock0(int block_id, const std::string & reason)
         cmd_vel_pub_->publish(cmd);
 
         if (debug_log_) {
-          RCLCPP_INFO_THROTTLE(
+          RCLCPP_WARN_THROTTLE(
             get_logger(), *get_clock(), debug_print_every_ms_,
             "[MOVE] cur=(%.3f, %.3f, %.3f) goal=(%.3f, %.3f, %.3f) "
-            "dist=%.4f best=%.4f cmd=(%.3f, %.3f, %.3f) "
+            "dist=%.4f best=%.4f f_err=%.3f l_err=%.3f straight_lock=%d "
+            "scale=(%.2f, %.2f) yaw_ff=%.3f cmd=(%.3f, %.3f, %.3f) "
             "x_slow=%d x_boost=%d queue=%zu pickup=%d block=%d",
             current_pose_.x, current_pose_.y, current_pose_.yaw,
             goal_pose_.x, goal_pose_.y, goal_pose_.yaw,
             dist, best_dist_,
+            control_forward_err,
+            control_lateral_err,
+            straight_lateral_lock_active_ ? 1 : 0,
+            forward_scale,
+            lateral_scale,
+            yaw_lateral_ff,
             cmd.linear.x, cmd.linear.y, cmd.angular.z,
             in_x_slow_zone ? 1 : 0,
             in_x_boost_zone ? 1 : 0,
@@ -3248,9 +3463,10 @@ if ((now_t - state_enter_time_).seconds() >= hold_time_) {
 		          current_path_block_ = -1;
 		          current_waypoint_source_ = "unknown";
 		          current_position_accepted_ = false;
-		          current_allow_block0_can_ = true;
-		          current_force_pre_align_yaw_ = false;
-	          current_use_goal_yaw_during_move_ = false;
+			          current_allow_block0_can_ = true;
+			          current_force_pre_align_yaw_ = false;
+		          current_use_goal_yaw_during_move_ = false;
+		          straight_lateral_lock_active_ = false;
 	          arm_grab_done_received_ = false;
 
           pickup_waiting_vision_lateral_ = false;
@@ -3397,34 +3613,61 @@ if ((now_t - state_enter_time_).seconds() >= hold_time_) {
           把 offset 转成一次相对横移距离。
           如果方向反了，改参数 vision_lateral_sign = -1.0。
         */
-        const double relative_dy =
-          clampAbs(
-            vision_lateral_sign_ * offset,
-            vision_lateral_max_);
+ double relative_dy =
+  vision_lateral_sign_ * vision_lateral_k_ * offset;
 
-        const double cyaw = std::cos(current_pose_.yaw);
-        const double syaw = std::sin(current_pose_.yaw);
+relative_dy = clampAbs(relative_dy, vision_lateral_max_);
 
-        Waypoint wp;
-        wp.pose.x = current_pose_.x - syaw * relative_dy;
-        wp.pose.y = current_pose_.y + cyaw * relative_dy;
-        wp.pose.yaw = current_pose_.yaw;
-        wp.mode = MoveMode::FREE_2D;
-        wp.source =
-          "vision_lateral_correction_" +
-          std::string(activeArmToString(active_vision_arm_)) +
-          "_offset_" + std::to_string(offset);
+if (std::abs(relative_dy) > vision_lateral_tolerance_ &&
+    vision_lateral_min_ > 1e-6 &&
+    std::abs(relative_dy) < vision_lateral_min_) {
+  relative_dy = std::copysign(vision_lateral_min_, relative_dy);
+}
 
-        /*
-          注意：
-          这里不能设置 is_pickup=true。
-          否则横移完成后 HOLD 会再次进入 startPickupForward，形成循环。
-          所以用 pickup_vision_lateral_block_ 单独保存 block。
-        */
-        wp.is_pickup = false;
-        wp.pickup_block = -1;
-        wp.path_block = -1;
-        wp.camera_look_backward = false;
+const double cyaw = std::cos(current_pose_.yaw);
+const double syaw = std::sin(current_pose_.yaw);
+
+Waypoint wp;
+wp.pose.x = current_pose_.x - syaw * relative_dy;
+wp.pose.y = current_pose_.y + cyaw * relative_dy;
+wp.pose.yaw = current_pose_.yaw;
+wp.mode = MoveMode::FREE_2D;
+wp.source =
+  "vision_lateral_correction_" +
+  std::string(activeArmToString(active_vision_arm_)) +
+  "_offset_" + std::to_string(offset);
+
+/*
+  注意：
+  这里不能设置 is_pickup=true。
+  否则横移完成后 HOLD 会再次进入 startPickupForward，形成循环。
+  所以用 pickup_vision_lateral_block_ 单独保存 block。
+*/
+wp.is_pickup = false;
+wp.pickup_block = -1;
+wp.path_block = -1;
+wp.camera_look_backward = false;
+
+/*
+  关键：
+  视觉横向纠偏通常只有几厘米，不能使用普通路径点 7cm 容差。
+  否则 initial_dist <= pos_tolerance 时会直接 yaw_only_mode=true，
+  导致根本不横移。
+
+  这里单独给视觉横移设置更小容差：
+    - custom_pos_tolerance 约等于视觉容差，最低 8mm
+    - custom_pos_release_tolerance 稍大，最低 15mm
+
+  同时 startWaypoint() 里会自动把 current_lateral_stop_tolerance_
+  压到 current_pos_tolerance_ * 0.5，
+  避免 2~4cm 视觉横移被 lateral_stop_tolerance 吃掉。
+*/
+wp.use_custom_pos_tolerance = true;
+wp.custom_pos_tolerance =
+  std::max(0.008, std::abs(vision_lateral_tolerance_));
+wp.custom_pos_release_tolerance =
+  std::max(0.015, std::abs(vision_lateral_tolerance_) * 1.5);
+
 
         RCLCPP_WARN(
           get_logger(),

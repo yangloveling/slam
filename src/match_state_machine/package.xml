@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+
+<package format="3">
+  <name>match_state_machine</name>
+  <version>1.0.0</version>
+  <description>ROBOCON decision state machines, runner nodes, and R2 Zone3 task node</description>
+
+  <maintainer email="robocon@example.com">Robocon Team</maintainer>
+  <license>Apache-2.0</license>
+
+  <!-- Build tool -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- ROS2 base dependencies -->
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>std_srvs</depend>
+
+  <!-- Custom / external project dependencies -->
+  <depend>lite_task_controller</depend>
+  <depend>my_interfaces</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+

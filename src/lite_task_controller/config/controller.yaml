@@ -4,6 +4,7 @@ lite_task_controller:
     cmd_vel_topic: /cmd_vel
     target_yaw_topic: /target_yaw
     status_topic: /lite_task_status
+    camera_gimbal_state_topic: /camera_gimbal_look_backward
 
     # ------------------------------------------------------------
     # R2 Dijkstra 路径订阅
@@ -11,86 +12,110 @@ lite_task_controller:
     r2_planned_path_topic: /r2_planned_path
     r2_action_sequence_topic: /r2_action_sequence
 
-    # 是否启用 R2 路径订阅
     enable_r2_path_subscribe: true
-
-    # 收到新路径时是否清空旧的排队 waypoint
     clear_queue_when_new_r2_path: true
-
-    # 收到新路径时是否取消当前正在执行的目标
-    # false：当前目标继续跑完，只清空后续旧队列，再加入新路径
-    # true ：立即急停并从新路径重新开始
     cancel_active_goal_when_new_r2_path: false
 
-    # 普通路径点默认 yaw，单位 rad
-    # 0.0 表示朝 +x 方向
-    r2_default_yaw: 0.0
+    # ------------------------------------------------------------
+    # R1 KFS 等待/清除
+    # ------------------------------------------------------------
+    r2_wait_for_r1_topic: /r2_wait_for_r1_kfs
+    r2_r1_cleared_topic: /r2_r1_kfs_cleared
+    enable_r1_wait_subscribe: true
 
-    # 下台阶前背对台阶 yaw，单位 rad
-    # 当前场地图中台阶方向近似为 +x，背对台阶为 -x，因此 yaw=pi
+    # ------------------------------------------------------------
+    # R2 yaw
+    # ------------------------------------------------------------
+    r2_default_yaw: 0.0
     r2_back_to_stair_yaw: 3.1415926
 
     control_frequency: 30.0
 
     # ------------------------------------------------------------
-    # PD 参数
-    # 降低 D 项，减少末端忽正忽负抖动
+    # Pickup / CAN / arm
     # ------------------------------------------------------------
-    k_forward: 1.4
-    k_lateral: 1.4
-    kd_forward: 0.03
-    kd_lateral: 0.03
-    d_filter_alpha: 0.25
+    step_cmd_topic: /step_cmd
+    arm_grab_done_topic: /arm_grab_done
+    pickup_vision_offset_topic: /vision/left_arm/snapshot_offset_avg
+
+    can_interface: can0
+    enable_can_step_cmd: true
+
+    enable_pickup_action: true
+    pickup_forward_distance: 0.20
+    pickup_forward_speed: 0.06
+    pickup_reverse_speed: 0.06
+    pickup_yaw_match_tolerance: 0.35
+
+    # ------------------------------------------------------------
+    # PD 参数
+    # 前进维持比较正常的响应，横向增强。
+    # ------------------------------------------------------------
+    k_forward: 1.45
+    k_lateral: 0.75
+    kd_forward: 0.06
+    kd_lateral: 0.10
     kw: 0.6
 
     # ------------------------------------------------------------
-    # 全局最大速度
+    # 最大速度
+    # 前进别太猛，横向比之前放开。
     # ------------------------------------------------------------
-    forward_max: 1.2
-    lateral_max: 1.2
-    wz_max: 0.18
+    forward_max: 0.48
+    lateral_max: 0.34
+    wz_max: 0.16
 
     # ------------------------------------------------------------
-    # 小速度死区
-    # 上位机不额外砍小速度，由 min_approach_speed 负责末端补偿
+    # 小速度死区 / 横向死区
+    # 横向死区降到 1.5cm，避免末端和视觉纠偏被吃掉。
     # ------------------------------------------------------------
     forward_min: 0.0
     lateral_min: 0.0
+    lateral_stop_tolerance: 0.015
+
+    enable_straight_lateral_lock: false
+    straight_lateral_lock_goal_tolerance: 0.100
+    straight_lateral_lock_max_lateral_ratio: 0.15
+    straight_lateral_lock_min_forward: 0.20
+    straight_lateral_finish_tolerance: 0.070
+
+    enable_yaw_lateral_feedforward: true
+    yaw_lateral_feedforward_gain: 0.35
+    yaw_lateral_feedforward_max: 0.06
+
+    enable_r2_lane_drive: true
 
     # ------------------------------------------------------------
     # 减速区和到点容差
-    # slow_down_radius 不要太大，否则过早减速
-    # pos_tolerance 不要太小，否则容易卡在目标附近
+    # slow_down_radius 不要太大，否则横向也会被拖慢。
+    # 代码里会额外保证横向 scale 不低于 0.55。
     # ------------------------------------------------------------
-    slow_down_radius: 0.20
-    pos_tolerance: 0.030
-    pos_release_tolerance: 0.050
-    yaw_tolerance: 0.030
+    slow_down_radius: 0.45
+    pos_tolerance: 0.075
+    pos_release_tolerance: 0.125
+    yaw_tolerance: 0.045
 
-    pos_stable_time: 0.15
-    yaw_stable_time: 0.15
-    hold_time: 0.10
+    pos_stable_time: 0.20
+    yaw_stable_time: 0.18
+    hold_time: 0.08
+
+    # ------------------------------------------------------------
+    # 到 block0 后发 CAN 0x01 后等待
+    # ------------------------------------------------------------
+    block0_after_open_wait_sec: 1.0
 
     # ------------------------------------------------------------
     # 预对齐阈值
-    # 大于 pi，避免到块中心前触发预旋转。
-    # R2 路径 waypoint 现在先平移到目标块中心，到达后再转到目标 yaw。
     # ------------------------------------------------------------
     pre_align_yaw_threshold: 6.30
 
-    # ------------------------------------------------------------
-    # 角速度控制
-    # 底盘单片机只需要 target_yaw 和当前 yaw，不需要上位机角速度
-    # ------------------------------------------------------------
     publish_angular_z: false
-
-    # ------------------------------------------------------------
-    # 移动过程中保持当前 yaw
-    # R2 路径 waypoint 不在移动阶段追目标 yaw，目标 yaw 只在到点后 ALIGN。
-    # ------------------------------------------------------------
     keep_yaw_during_move: true
     use_current_yaw_as_move_target: true
 
+    # ------------------------------------------------------------
+    # Debug
+    # ------------------------------------------------------------
     debug_log: true
     debug_safe_mode: false
     debug_force_zero_angular_z: false
@@ -100,9 +125,15 @@ lite_task_controller:
     debug_safe_lateral_max: 0.15
     debug_safe_wz_max: 0.15
 
+    # ------------------------------------------------------------
+    # 超时
+    # ------------------------------------------------------------
     enable_goal_timeout: true
     goal_timeout_sec: 120.0
 
+    # ------------------------------------------------------------
+    # 坐标/命令符号
+    # ------------------------------------------------------------
     control_forward_sign: 1.0
     control_lateral_sign: 1.0
 
@@ -114,7 +145,7 @@ lite_task_controller:
 
     # ------------------------------------------------------------
     # x 慢速区
-    # 保持原逻辑
+    # 注意：代码会改成只缩放 linear.x，不再缩放 linear.y。
     # ------------------------------------------------------------
     enable_x_slow_zone: true
     x_slow_zone_min: 2.0
@@ -125,17 +156,17 @@ lite_task_controller:
 
     # ------------------------------------------------------------
     # x 坡道提速区
-    # 保持原逻辑
+    # 注意：代码会改成只 boost linear.x，不再 boost linear.y。
     # ------------------------------------------------------------
     enable_x_boost_zone: true
     x_boost_zone_min: 8.195
     x_boost_zone_max: 10.595
-    x_boost_zone_scale: 1.3
+    x_boost_zone_scale: 1.15
     x_boost_zone_hysteresis: 0.05
     x_boost_scale_angular: false
 
     # ------------------------------------------------------------
-    # 旧参数关闭，避免干扰
+    # 旧常速区关闭
     # ------------------------------------------------------------
     enable_constant_x_speed_zone: false
     constant_x_speed_zone_min: 1.0
@@ -144,31 +175,58 @@ lite_task_controller:
 
     # ------------------------------------------------------------
     # 加速度限制
-    # 当前关闭；如果以后打开，x/y 限制保持一致
+    # 前进适中，横向放开到 0.55。
     # ------------------------------------------------------------
     enable_acc_limit: true
-    max_acc_x: 0.45
-    max_acc_y: 0.30
-    max_acc_wz: 0.30
+    max_acc_x: 0.75
+    max_acc_y: 0.55
+    max_acc_wz: 0.25
 
     # ------------------------------------------------------------
     # 误差限幅
-    # x/y 参与控制的误差上限一致
+    # 横向放开到 0.80，避免大横向误差时太弱。
     # ------------------------------------------------------------
-    max_forward_error_for_control: 2.0
-    max_lateral_error_for_control: 2.0
+    max_forward_error_for_control: 1.5
+    max_lateral_error_for_control: 0.80
 
     # ------------------------------------------------------------
     # 最小接近速度
-    # 关键：防止接近目标时速度太小，底盘推不动
+    # boost_lateral=true，让横向末端也能获得最低速度补偿。
     # ------------------------------------------------------------
     enable_min_approach_speed: true
     min_approach_linear_speed: 0.025
-    min_slow_scale: 0.18
+    min_slow_scale: 0.28
+    min_approach_boost_lateral: true
 
     # ------------------------------------------------------------
     # 卡住释放
     # ------------------------------------------------------------
     enable_stuck_release: true
-    stuck_release_time: 0.80
+    stuck_release_time: 0.70
     progress_epsilon: 0.003
+
+    # ------------------------------------------------------------
+    # Vision lateral correction
+    # ------------------------------------------------------------
+    enable_vision_lateral_correction: true
+
+    vision_alignment_request_topic: /vision/alignment/request
+    vision_recognition_reset_topic: /vision/recognition_reset_cmd
+
+    left_snapshot_offset_topic: /vision/left_arm/snapshot_offset_avg
+    right_snapshot_offset_topic: /vision/right_arm/snapshot_offset_avg
+
+    lateral_correction_cmd_topic: /lite_task_controller/lateral_correction_cmd
+
+    vision_lateral_k: 0.85
+    vision_lateral_tolerance: 0.015
+    vision_lateral_max: 0.20
+    vision_lateral_min: 0.0
+    vision_lateral_stable_time: 0.20
+    vision_offset_timeout: 2.0
+
+    # 如果视觉纠偏方向反了，只改这个为 1.0
+    vision_lateral_sign: -1.0
+
+    auto_publish_reset_kfs_after_lateral_done: true
+

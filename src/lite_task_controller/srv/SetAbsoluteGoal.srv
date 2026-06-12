@@ -1,6 +1,9 @@
 float64 x
 float64 y
 float64 yaw
+bool use_custom_tolerance
+float64 pos_tolerance
+float64 pos_release_tolerance
 ---
 bool success
 string message

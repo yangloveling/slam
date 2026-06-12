@@ -9,7 +9,7 @@ output_pcd = "map_field_voxel_005.pcd"
 output_ply = "map_field_voxel_005.ply"
 info_file = "map_info.yaml"
 
-# 按你的实际比赛场地范围修改
+
 crop_box = {
     "xmin": -2.0,
     "xmax": 8.0,
