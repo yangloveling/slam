@@ -1,0 +1,92 @@
+omni_nav_controller:
+  ros__parameters:
+    # ------------------------------------------------------------
+    # Topics
+    # ------------------------------------------------------------
+    cmd_vel_topic: /cmd_vel
+    target_yaw_topic: /target_yaw
+    odom_topic: /odometry/filtered
+    scan_topic: /scan
+    motor_velocity_topic: /motor_velocity
+    rotate_cmd_topic: /rotate_cmd
+
+    # ------------------------------------------------------------
+    # Yaw source
+    # ------------------------------------------------------------
+    use_tf_yaw: false
+    use_yaw_topic: true
+    yaw_topic: /yaw
+    yaw_in_degrees: true
+
+    yaw_frame: map
+    base_frame: base_link
+    tf_lookup_timeout: 0.03
+    stop_when_yaw_lost: false
+
+    # ------------------------------------------------------------
+    # Velocity mapping
+    # 前进保持适中，横向增强。
+    # ------------------------------------------------------------
+    scale_vx: 1450.0
+    scale_vy: 1650.0
+
+    sign_vx: 1.0
+    sign_vy: 1.0
+
+    max_vx: 720.0
+    max_vy: 520.0
+
+    # x 保留启动阈值，y 给一点启动量，避免小横移推不动。
+    min_start_vx: 25.0
+    min_start_vy: 18.0
+
+    deadband_vx: 8.0
+    deadband_vy: 4.0
+
+    # y 响应加快
+    alpha_vx: 0.45
+    alpha_vy: 0.50
+
+    # ------------------------------------------------------------
+    # Axis remap
+    # ------------------------------------------------------------
+    swap_xy: false
+    invert_x: false
+    invert_y: false
+
+    # ------------------------------------------------------------
+    # Timeout
+    # ------------------------------------------------------------
+    cmd_timeout: 0.5
+    target_yaw_timeout: 0.8
+    stop_on_cmd_timeout: true
+    hold_last_target_yaw: true
+
+    target_yaw_in_degrees: false
+
+    # ------------------------------------------------------------
+    # Obstacle slowdown
+    # ------------------------------------------------------------
+    enable_scan_obstacle: false
+    safe_distance: 0.3
+    obstacle_slowdown_ratio: 0.3
+    obstacle_detect_count: 3
+    obstacle_free_count: 5
+    obstacle_front_ratio: 0.25
+    slowdown_vx_only: true
+
+    # ------------------------------------------------------------
+    # Yaw-motion gate
+    # 如果现场发现因为 yaw 误差导致不走，可以直接改 false。
+    # ------------------------------------------------------------
+    enable_yaw_motion_gate: true
+    yaw_stop_threshold_deg: 25.0
+    yaw_slow_threshold_deg: 7.0
+    yaw_slow_min_scale: 0.45
+
+    # ------------------------------------------------------------
+    # Debug
+    # ------------------------------------------------------------
+    debug_log: true
+    debug_print_every_ms: 1000
+
